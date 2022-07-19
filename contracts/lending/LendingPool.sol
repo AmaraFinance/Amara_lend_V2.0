@@ -324,7 +324,9 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
    */
   function initPool(ERC20 _token, IPoolConfiguration _poolConfig) external onlyOwner {
     for (uint256 i = 0; i < tokenList.length; i++) {
-      require(tokenList[i] != _token, "this pool already exists on lending pool");
+      if(tokenList[i] == _token){
+        return;
+      }
     }
     string memory maTokenSymbol = string(abi.encodePacked("ma", _token.symbol()));
     string memory maTokenName = string(abi.encodePacked("Ma", _token.symbol()));
@@ -358,10 +360,6 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
    */
   function setPoolConfig(ERC20 _token, IPoolConfiguration _poolConfig) external onlyOwner {
     Pool storage pool = pools[address(_token)];
-    require(
-      address(pool.maToken) != address(0),
-      "pool isn't initialized, can't set the pool config"
-    );
     pool.poolConfig = _poolConfig;
     emit PoolConfigUpdated(address(_token), address(_poolConfig));
   }
@@ -387,7 +385,7 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     userData.disableUseAsCollateral = !_useAsCollateral;
     // only disable as collateral need to check the account health
     if (!_useAsCollateral) {
-      require(isAccountHealthy(msg.sender), "can't set use as collateral, account isn't healthy.");
+      require(isAccountHealthy(msg.sender), "account isn't healthy.");
     }
   }
 
@@ -510,7 +508,7 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
    * @return the balance of the ERC20 token in the pool
    */
   function getTotalAvailableLiquidity(ERC20 _token) public view returns (uint256) {
-    return _token.balanceOf(address(this));
+    return _token.balanceOf(address(this)).src2dest(_token.decimals());
   }
 
   /**
@@ -577,17 +575,17 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
    * borrow shares = (_amount * total borrow shares) / total borrows
    * if the calculated borrow shares = 10.9 then the borrow shares = 10
    */
-  function calculateRoundDownBorrowShareAmount(ERC20 _token, uint256 _amount)
-    internal
-    view
-    returns (uint256)
-  {
-    Pool storage pool = pools[address(_token)];
-    if (pool.totalBorrowShares == 0) {
-      return 0;
-    }
-    return _amount.mul(pool.totalBorrowShares).div(pool.totalBorrows);
-  }
+  // function calculateRoundDownBorrowShareAmount(ERC20 _token, uint256 _amount)
+  //   internal
+  //   view
+  //   returns (uint256)
+  // {
+  //   Pool memory pool = pools[address(_token)];
+  //   if (pool.totalBorrowShares == 0) {
+  //     return 0;
+  //   }
+  //   return _amount.mul(pool.totalBorrowShares).div(pool.totalBorrows);
+  // }
 
   /**
    * @dev calculate liquidity share amount (round-up)
@@ -746,11 +744,10 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     updateReward
   {
     Pool storage pool = pools[address(_token)];
-    require(pool.status == PoolStatus.ACTIVE, "can't deposit to this pool");
-    require(_amount > 0, "deposit amount should more than 0");
+    require(pool.status == PoolStatus.ACTIVE && _amount > 0, "can't deposit");
 
     // 1. calculate liquidity share amount
-    uint256 shareAmount = calculateRoundDownLiquidityShareAmount(_token, _amount);
+    uint256 shareAmount = calculateRoundDownLiquidityShareAmount(_token, _amount.src2dest(_token.decimals()));
 
     // 2. mint maToken to user equal to liquidity share amount
     pool.maToken.mint(msg.sender, shareAmount);
@@ -780,24 +777,23 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
   {
     Pool storage pool = pools[address(_token)];
     UserPoolData storage userData = userPoolData[msg.sender][address(_token)];
-    require(pool.status == PoolStatus.ACTIVE, "can't borrow this pool");
-    require(pool.ableBorrow, "pool disable borrow, can't borrow this pool");
-    require(_amount > 0, "borrow amount should more than 0");
+    require(pool.status == PoolStatus.ACTIVE && pool.ableBorrow && _amount > 0, "can't borrow");
+    uint256 destAmount = _amount.src2dest(_token.decimals());
     require(
-      _amount <= getTotalAvailableLiquidity(_token),
-      "amount is more than available liquidity on pool"
+      destAmount <= getTotalAvailableLiquidity(_token),
+      "amount is more than available liquidity"
     );
     uint256 bal = pool.maToken.balanceOf(msg.sender);
-    require(bal == 0, "you have deposited, can't borrow this pool");
+    require(bal == 0, "you have deposited, can't borrow");
 
     // 0. Claim token from latest borrow
     claimCurrentReward(_token, msg.sender);
 
     // 1. calculate borrow share amount
-    uint256 borrowShare = calculateRoundUpBorrowShareAmount(_token, _amount);
+    uint256 borrowShare = calculateRoundUpBorrowShareAmount(_token, destAmount);
 
     // 2. update pool state
-    pool.totalBorrows = pool.totalBorrows.add(_amount);
+    pool.totalBorrows = pool.totalBorrows.add(destAmount);
     pool.totalBorrowShares = pool.totalBorrowShares.add(borrowShare);
     uint256 maxBorrowInUSD = pool.poolConfig.getMaxBorrowInUSD();
     if(maxBorrowInUSD > 0){
@@ -871,16 +867,16 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
    * User can call this function to repay the ERC20 token to the pool. For user's convenience,
    * this function will convert repay amount to repay shares then do the repay.
    */
-  function repayByAmount(ERC20 _token, uint256 _amount)
-  external
-    nonReentrant
-    updatePoolWithInterestsAndTimestamp(_token)
-    updateReward
-  {
-    // calculate round down borrow share
-    uint256 repayShare = calculateRoundDownBorrowShareAmount(_token, _amount);
-    repayInternal(_token, repayShare);
-  }
+  // function repayByAmount(ERC20 _token, uint256 _amount)
+  // external
+  //   nonReentrant
+  //   updatePoolWithInterestsAndTimestamp(_token)
+  //   updateReward
+  // {
+  //   // calculate round down borrow share
+  //   uint256 repayShare = calculateRoundDownBorrowShareAmount(_token, _amount.src2dest(_token.decimals()));
+  //   repayInternal(_token, repayShare);
+  // }
 
   /**
    * @dev repay the ERC20 token to the pool equal to repay shares
@@ -912,7 +908,7 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     UserPoolData storage userData = userPoolData[msg.sender][address(_token)];
     require(
       pool.status == PoolStatus.ACTIVE || pool.status == PoolStatus.CLOSED,
-      "can't repay to this pool"
+      "can't repay"
     );
     uint256 paybackShares = _share;
     if (paybackShares > userData.borrowShares) {
@@ -933,8 +929,9 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     userData.borrowShares = userData.borrowShares.sub(paybackShares);
 
     // 4. transfer payback tokens to the pool
-    _token.safeTransferFrom(msg.sender, address(this), paybackAmount);
-    emit Repay(address(_token), msg.sender, paybackShares, paybackAmount);
+    uint256 srcPaybackAmount = paybackAmount.dest2src(_token.decimals());
+    _token.safeTransferFrom(msg.sender, address(this), srcPaybackAmount);
+    emit Repay(address(_token), msg.sender, paybackShares, srcPaybackAmount);
   }
 
   /**
@@ -958,7 +955,7 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     uint256 alBalance = pool.maToken.balanceOf(msg.sender);
     require(
       pool.status == PoolStatus.ACTIVE || pool.status == PoolStatus.CLOSED,
-      "can't withdraw this pool"
+      "can't withdraw"
     );
     uint256 withdrawShares = _share;
     if (withdrawShares > alBalance) {
@@ -972,11 +969,12 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     pool.maToken.burn(msg.sender, withdrawShares);
 
     // 3. transfer ERC20 tokens to user account
-    _token.transfer(msg.sender, withdrawAmount);
+    uint256 srcWithdrawAmount = withdrawAmount.dest2src(_token.decimals());
+    _token.transfer(msg.sender, srcWithdrawAmount);
 
     // 4. check account health. this transaction will revert if the account of this user is not healthy
-    require(isAccountHealthy(msg.sender), "account is not healthy. can't withdraw");
-    emit Withdraw(address(_token), msg.sender, withdrawShares, withdrawAmount);
+    require(isAccountHealthy(msg.sender), "account is not healthy");
+    emit Withdraw(address(_token), msg.sender, withdrawShares, srcWithdrawAmount);
   }
 
   /**
@@ -1040,14 +1038,14 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     UserPoolData storage userTokenData = userPoolData[_user][address(_token)];
     require(
       pool.status == PoolStatus.ACTIVE || pool.status == PoolStatus.CLOSED,
-      "can't liquidate this pool"
+      "can't liquidate"
     );
 
     // 0. Claim token from latest user borrow
     claimCurrentReward(_token, _user);
 
     // 1. check account health of user to make sure that liquidator can liquidate this account
-    require(!isAccountHealthy(_user), "user's account is healthy. can't liquidate this account");
+    require(!isAccountHealthy(_user), "can't liquidate this account");
 
     // 2. check if the user enables collateral
     require(
@@ -1075,20 +1073,10 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     // 6. calculate collateral amount and shares
     uint256 collateralAmount = calculateCollateralAmount(_token, liquidateAmount, _collateral);
     uint256 collateralShares = calculateRoundUpLiquidityShareAmount(_collateral, collateralAmount);
-
-    // 7. transfer liquidate amount to the pool
-    _token.safeTransferFrom(msg.sender, address(this), liquidateAmount);
-
-    // 8. burn al token of user equal to collateral shares
-    require(
-      collateralPool.maToken.balanceOf(_user) > collateralShares,
-      "user collateral isn't enough"
-    );
-    collateralPool.maToken.burn(_user, collateralShares);
-
-    // 9. mint al token equal to collateral shares to liquidator
-    collateralPool.maToken.mint(msg.sender, collateralShares);
-
+    
+    uint256 srcLiquidateAmount = liquidateAmount.dest2src(_token.decimals());
+    liquidateInternal2(_user,_token,srcLiquidateAmount,collateralShares,collateralPool);
+  
     // 10. update pool state
     pool.totalBorrows = pool.totalBorrows.sub(liquidateAmount);
     pool.totalBorrowShares = pool.totalBorrowShares.sub(liquidateShares);
@@ -1100,12 +1088,35 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
       _user,
       address(_token),
       address(_collateral),
-      liquidateAmount,
+      srcLiquidateAmount,
       liquidateShares,
       collateralAmount,
       collateralShares,
       msg.sender
     );
+  }
+
+
+  function liquidateInternal2(
+    address _user,
+    ERC20 _token,
+    uint256 srcLiquidateAmount,
+    uint256 collateralShares,
+    Pool memory collateralPool
+  ) internal {
+    // 7. transfer liquidate amount to the pool
+    _token.safeTransferFrom(msg.sender, address(this), srcLiquidateAmount);
+
+    // 8. burn al token of user equal to collateral shares
+    require(
+      collateralPool.maToken.balanceOf(_user) > collateralShares,
+      "user collateral isn't enough"
+    );
+    collateralPool.maToken.burn(_user, collateralShares);
+
+    // 9. mint al token equal to collateral shares to liquidator
+    collateralPool.maToken.mint(msg.sender, collateralShares);
+
   }
 
   /**
@@ -1125,11 +1136,10 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     uint256 _liquidateAmount,
     ERC20 _collateral
   ) internal view returns (uint256) {
-    require(address(priceOracle) != address(0), "price oracle isn't initialized");
+    // require(address(priceOracle) != address(0), "oracle isn't initialized");
     uint256 tokenPricePerUnit = priceOracle.getAssetPrice(address(_token));
-    require(tokenPricePerUnit > 0, "liquidated token price isn't correct");
     uint256 collateralPricePerUnit = priceOracle.getAssetPrice(address(_collateral));
-    require(collateralPricePerUnit > 0, "collateral price isn't correct");
+    require(tokenPricePerUnit > 0 && collateralPricePerUnit > 0, "price isn't correct");
     uint256 liquidationBonus = pools[address(_token)].poolConfig.getLiquidationBonusPercent();
     return (
       tokenPricePerUnit.mul(_liquidateAmount).wadMul(liquidationBonus).div(collateralPricePerUnit)
@@ -1153,7 +1163,7 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
   function setLiquidationPercent(uint256 _liquidationPercent) external onlyOwner {
     liquidationPercent = _liquidationPercent;
   }
-  
+
   /**
    * @dev withdraw function for admin to get the reserves
    * @param _token the ERC20 token of the pool to withdraw
@@ -1169,9 +1179,9 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
     uint256 poolBalance = _token.balanceOf(address(this));
     require(_amount <= poolBalance, "pool balance insufficient");
     // admin can't withdraw more than pool's reserve
-    require(_amount <= pool.poolReserves, "amount is more than pool reserves");
+    require(_amount.src2dest(_token.decimals()) <= pool.poolReserves, "amount is more than pool reserves");
     _token.safeTransfer(msg.sender, _amount);
-    pool.poolReserves = pool.poolReserves.sub(_amount);
+    pool.poolReserves = pool.poolReserves.sub(_amount.src2dest(_token.decimals()));
     emit ReserveWithdrawn(address(_token), _amount, msg.sender);
   }
 
@@ -1213,11 +1223,11 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
         (uint256 lendersGain, uint256 borrowersGain) = splitReward(tokenList[i], portion);
         uint256 tokenAmount = pool.maToken.getTokenReleaseAmount();
         (uint256 lendersGain2, uint256 borrowersGain2) = splitReward(tokenList[i], tokenAmount);
-      
+
         // Distribute the token to the lenders (MaToken holder)
         lendingPoolInfo.mara().approve(address(pool.maToken), lendersGain);
         pool.maToken.receiveToken(lendersGain,lendersGain2);
-        
+
         // Distribute the token to the borrowers
         updateBorrowReward(pool, borrowersGain, borrowersGain2);
       }
@@ -1309,7 +1319,7 @@ contract LendingPool is Ownable, ILendingPool, IReceiver, ReentrancyGuard {
       .div(1e12);
     return pending < pool.totalMaraReward ? pending : pool.totalMaraReward;
   }
-  
+
   function calculateTokenReward(ERC20 _token, address _account) public view returns (uint256) {
     Pool storage pool = pools[address(_token)];
     UserPoolData storage userData = userPoolData[_account][address(_token)];
