@@ -149,11 +149,7 @@ contract LendingInfoGetter is Ownable {
         bool active,
         bool ableBorrow,
         uint256 borrowInterestRate,
-    // address maTokenAddress,
-    // address poolConfigAddress,
-    //        ERC20 mara,
         string memory maraSymbol,
-    //        ERC20 rewardToken,
         string memory rewardTokenSymbol,
         uint256 totalBorrows,
         uint256 totalBorrowShares,
@@ -169,8 +165,6 @@ contract LendingInfoGetter is Ownable {
         totalLiquidity = lendingPool.getTotalLiquidity(_token);
         totalAvailableLiquidity = lendingPool.getTotalAvailableLiquidity(_token);
         borrowInterestRate = pool.poolConfig.calculateInterestRate(pool.totalBorrows, totalLiquidity);
-        // maTokenAddress = address(pool.maToken);
-        // poolConfigAddress = address(pool.poolConfig);
         totalBorrows = pool.totalBorrows;
         totalBorrowShares = pool.totalBorrowShares;
 
