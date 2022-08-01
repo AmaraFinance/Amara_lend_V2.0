@@ -238,4 +238,53 @@ contract LendingInfoGetter is Ownable {
         return _shareAmount.mul(pool.totalBorrows).divCeil(pool.totalBorrowShares);
     }
 
+    function getSortAccountHealthy(address[] memory users) public view returns (AccountHealthy[] memory accountHealthy, uint256 liquidationPercent){
+        liquidationPercent = lendingPool.liquidationPercent();
+        uint256[] memory debtRatio = new uint256[](users.length);
+        uint256[] memory arrayIds = new uint256[](users.length);
+        AccountHealthy[] memory acctHealthy = new AccountHealthy[](users.length);
+        for (uint256 i = 0; i < users.length; i++) {
+            acctHealthy[i].isAccountHealthy = lendingPool.isAccountHealthy(users[i]);
+            acctHealthy[i].user = users[i];
+            acctHealthy[i].index = i;
+            (acctHealthy[i].totalLiquidityBalanceBase, acctHealthy[i].totalCollateralBalanceBase, acctHealthy[i].totalBorrowBalanceBase) = lendingPool.getUserAccount(users[i]);
+            if (acctHealthy[i].totalCollateralBalanceBase > 0) {
+                debtRatio[i] = acctHealthy[i].totalBorrowBalanceBase.mul(10000).div(acctHealthy[i].totalCollateralBalanceBase.wadMul(liquidationPercent));
+            } else {
+                debtRatio[i] = 0;
+            }
+            acctHealthy[i].debtRatio = debtRatio[i];
+            arrayIds[i] = i;
+        }
+        quickSort(debtRatio, arrayIds, 0, arrayIds.length - 1);
+        accountHealthy = new AccountHealthy[](arrayIds.length);
+        for (uint256 i = 0; i < arrayIds.length; i++) {
+            accountHealthy[arrayIds.length - 1 - i] = acctHealthy[arrayIds[i]];
+        }
+    }
+
+    // Fast scheduling algorithm .
+    function quickSort(uint256[] memory arr, uint256[] memory ids, uint256 left, uint256 right) public view {
+        uint256 i = left;
+        uint256 j = right;
+        if (i == j) return;
+        uint256 pivot = arr[left + (right - left) / 2];
+        while (i <= j) {
+            while (arr[i] < pivot) i++;
+            while (pivot < arr[j]) j--;
+            if (i <= j) {
+                (arr[i], arr[j]) = (arr[j], arr[i]);
+                (ids[i], ids[j]) = (ids[j], ids[i]);
+                i++;
+                if (j > 0) {
+                    j--;
+                }
+
+            }
+        }
+        if (left < j)
+            quickSort(arr, ids, left, j);
+        if (i < right)
+            quickSort(arr, ids, i, right);
+    }
 }
