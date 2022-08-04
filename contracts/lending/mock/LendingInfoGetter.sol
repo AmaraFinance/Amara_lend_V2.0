@@ -287,4 +287,86 @@ contract LendingInfoGetter is Ownable {
         if (i < right)
             quickSort(arr, ids, i, right);
     }
+
+    function getUserBorrowInfo(ERC20 _token) public view returns (
+        bool isAccountHealthy,
+        uint256 maxCanBorrow,
+        uint256 collateralPercent,
+        uint256 liquidationPercent,
+        uint256 totalLiquidityBalanceBase,
+        uint256 totalCollateralBalanceBase,
+        uint256 totalBorrowBalanceBase,
+        uint256 compoundedBorrowBalance,
+        uint256 totalAvailableLiquidity,
+        uint256 maxBorrowInUSD
+    ){
+        LendingPool.Pool memory pool = getPool(_token);
+        isAccountHealthy = lendingPool.isAccountHealthy(msg.sender);
+        (totalLiquidityBalanceBase, totalCollateralBalanceBase, totalBorrowBalanceBase) = lendingPool.getUserAccount(msg.sender);
+        liquidationPercent = lendingPool.liquidationPercent();
+        collateralPercent = pool.poolConfig.getCollateralPercent();
+        if(isAccountHealthy == true){
+            maxCanBorrow = totalCollateralBalanceBase.wadMul(liquidationPercent).sub(totalBorrowBalanceBase).mul(UNIT).div(priceOracle.getAssetPrice(address(_token)));
+        }
+        (, compoundedBorrowBalance,) = lendingPool.getUserPoolData(address(msg.sender), ERC20(_token));
+        totalAvailableLiquidity = lendingPool.getTotalAvailableLiquidity(_token);
+        maxBorrowInUSD = pool.poolConfig.getMaxBorrowInUSD();
+    }
+
+    function getUserWithdrawInfo(ERC20 _token) public view returns (
+        uint256 maxWithdraw,
+        uint256 maxShareWithdraw,
+        uint256 compoundedLiquidityBalance
+    ){
+        (compoundedLiquidityBalance,,) = lendingPool.getUserPoolData(address(msg.sender), ERC20(_token));
+        (, uint256 totalCollateralBalanceBase, uint256 totalBorrowBalanceBase) = lendingPool.getUserAccount(msg.sender);
+        uint256 price = priceOracle.getAssetPrice(address(_token));
+        uint256 percent = lendingPool.liquidationPercent();
+        uint256 totalCollateral = totalCollateralBalanceBase.wadMul(percent);
+        if(totalBorrowBalanceBase >= totalCollateral){
+            maxWithdraw = 0;
+            maxShareWithdraw = 0;
+        }else{
+            LendingPool.Pool memory pool = getPool(_token);
+            uint256 collateralPercent = pool.poolConfig.getCollateralPercent();
+            maxWithdraw = totalCollateral.sub(totalBorrowBalanceBase).wadDiv(percent).wadDiv(collateralPercent).wadDiv(price);
+            maxWithdraw = maxWithdraw > compoundedLiquidityBalance ? compoundedLiquidityBalance : maxWithdraw;
+            maxShareWithdraw = calculateRoundUpLiquidityShareAmount(_token,maxWithdraw);
+        }
+    }
+
+    function calculateRoundUpLiquidityShareAmount(ERC20 _token, uint256 _amount) public view returns (
+        uint256
+    ){
+        LendingPool.Pool memory pool = getPool(_token);
+        uint256 poolTotalLiquidityShares = pool.maToken.totalSupply();
+        uint256 poolTotalLiquidity = lendingPool.getTotalLiquidity(_token);
+        // liquidity share amount of the first depositing is equal to amount
+        if (poolTotalLiquidity == 0 || poolTotalLiquidityShares == 0) {
+        return _amount;
+        }
+        return _amount.mul(poolTotalLiquidityShares).divCeil(poolTotalLiquidity);
+    }
+    
+    function getPoolGain(ERC20 _token) public view returns (
+        ERC20 rewardToken,
+        uint256 lendersGainMaraPerBlock,
+        uint256 lendersGainTokenPerBlock,
+        uint256 borrowersGainMaraPerBlock,
+        uint256 borrowersGainTokenPerBlock
+    ) {
+        LendingPool.Pool memory pool = getPool(_token);
+
+        (uint256 borrow, uint256 totalBorrow) = _getBorrowValue(_token);
+        if (totalBorrow != 0 && pool.status == LendingPool.PoolStatus.ACTIVE) {
+            uint256 maraPerBlock = lendingPoolInfo.tokensPerBlock().mul(borrow).div(totalBorrow);
+            uint256 tokenPerBlock = pool.maToken.tokensPerBlock();
+            (lendersGainMaraPerBlock) = _splitReward(_token, maraPerBlock, pool.poolConfig, pool.totalBorrows);
+            borrowersGainMaraPerBlock = maraPerBlock.sub(lendersGainMaraPerBlock);
+            (lendersGainTokenPerBlock) = _splitReward(_token, tokenPerBlock, pool.poolConfig, pool.totalBorrows);
+            borrowersGainTokenPerBlock = tokenPerBlock.sub(lendersGainTokenPerBlock);
+        }
+        rewardToken = pool.maToken.rewardToken();
+    }
+
 }
