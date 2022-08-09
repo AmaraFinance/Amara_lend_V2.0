@@ -368,5 +368,81 @@ contract LendingInfoGetter is Ownable {
         }
         rewardToken = pool.maToken.rewardToken();
     }
+    function getUserInfo(ERC20 _token) public view returns (
+            uint256 compoundedLiquidityBalance,
+            uint256 compoundedBorrowBalance,
+            bool userUsePoolAsCollateral,
+            uint256 pendingMaraBorrow,
+            uint256 pendingRewardBorrow,
+            uint256 pendingMaraLend,
+            uint256 pendingRewardLend
+        ) {
+            LendingPool.Pool memory pool = getPool(_token);
+
+            (
+            uint256 multiplierBorrow,
+            uint256 multiplierTokenBorrow,
+            uint256 multiplierLend,
+            uint256 multiplierTokenLend
+            ) = _updateMultiplier(_token);
+
+
+            (compoundedLiquidityBalance, compoundedBorrowBalance, userUsePoolAsCollateral) = lendingPool.getUserPoolData(address(msg.sender), ERC20(_token));
+            pendingMaraBorrow = _calculateRewardBorrow(
+                _token,
+                address(msg.sender),
+                multiplierBorrow
+            );
+
+            pendingRewardBorrow = _calculateTokenRewardBorrow(
+                _token,
+                address(msg.sender),
+                multiplierTokenBorrow
+            );
+
+            pendingMaraLend = _calculateRewardLend(
+                pool.maToken,
+                address(msg.sender),
+                multiplierLend
+            );
+
+            pendingRewardLend = _calculateTokenRewardLend(
+                pool.maToken,
+                address(msg.sender),
+                multiplierTokenLend
+            );
+        }
+
+    function getUserDebtRatio(address[] calldata users) public view returns (uint256[] memory) {
+        uint256[] memory ratios = new uint[](users.length);
+        for (uint256 i = 0; i < users.length; i++) {
+            (, uint256 totalCollateralBalance, uint256 totalBorrowBalance) = lendingPool.getUserAccount(users[i]);
+            uint256 ratio = totalBorrowBalance.mul(10000).div(totalCollateralBalance);
+            ratios[i] = ratio;
+        }
+        return ratios;
+    }
+
+    function _getBorrowValue(ERC20 _token) public view returns (uint256 borrow, uint256 totalBorrow) {
+        borrow = 0;
+        totalBorrow = 0;
+        uint256 poolLength = lendingPool.poolLength();
+        for (uint256 i = 0; i < poolLength; i++) {
+            try lendingPool.tokenList(i) returns (ERC20 token) {
+                (LendingPool.PoolStatus poolStatus,,,,,,,,) = lendingPool.getPool(token);
+                if (poolStatus == LendingPool.PoolStatus.ACTIVE) {
+                    uint256 poolBorrow = lendingPool.totalBorrowInUSD(token);
+                    totalBorrow = totalBorrow.add(poolBorrow);
+                    if (address(token) == address(_token)) {
+                        borrow = poolBorrow;
+                    }
+                }
+            } catch Error(string memory /*reason*/) {
+                break;
+            } catch (bytes memory /*lowLevelData*/) {
+                break;
+            }
+        }
+    }
 
 }
