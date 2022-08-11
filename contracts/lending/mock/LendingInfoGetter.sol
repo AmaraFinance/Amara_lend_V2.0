@@ -444,5 +444,79 @@ contract LendingInfoGetter is Ownable {
             }
         }
     }
+    function _updateMultiplier(
+        ERC20 _token
+    ) public view returns (
+        uint256 multiplierBorrow,
+        uint256 multiplierTokenBorrow,
+        uint256 multiplierLend,
+        uint256 multiplierTokenLend
+    ) {
+        LendingPool.Pool memory pool = getPool(_token);
+        multiplierBorrow = pool.multiplier;
+        multiplierTokenBorrow = pool.multiplierToken;
+        multiplierLend = pool.maToken.multiplier();
+        multiplierTokenLend = pool.maToken.multiplierToken();
+
+        (uint256 borrow, uint256 totalBorrow) = _getBorrowValue(_token);
+        if (totalBorrow != 0 && pool.status == LendingPool.PoolStatus.ACTIVE) {
+            uint256 maraAmount = lendingPoolInfo.getMaraReleaseAmount(
+                block.number
+            ).mul(borrow).div(totalBorrow);
+            uint256 rewardAmount = pool.maToken.getTokenReleaseAmount();
+            (uint256 lendersGain) = _splitReward(_token, maraAmount, pool.poolConfig, pool.totalBorrows);
+            (uint256 lendersGain2) = _splitReward(_token, rewardAmount, pool.poolConfig, pool.totalBorrows);
+
+            if (pool.maToken.totalSupply() > 0) {
+               multiplierLend = multiplierLend.add(lendersGain.mul(1e12).div(pool.maToken.totalSupply()));
+               multiplierTokenLend = multiplierTokenLend.add(lendersGain2.mul(1e12).div(pool.maToken.totalSupply()));
+            }
+
+            // borrowers gain = amount - lenders gain
+            if (pool.totalBorrowShares > 0) {  
+                multiplierBorrow = multiplierBorrow.add(
+                    maraAmount.sub(lendersGain).mul(1e12).div(pool.totalBorrowShares)
+                );
+                multiplierTokenBorrow = multiplierTokenBorrow.add(
+                    rewardAmount.sub(lendersGain2).mul(1e12).div(pool.totalBorrowShares)
+                );
+            }
+        }
+    }
+
+    function _splitReward(
+        ERC20 _token,
+        uint256 _amount,
+        IPoolConfiguration _poolConfig,
+        uint256 _totalBorrows
+    ) public view returns (
+        uint256 lendersGain
+    ) {
+        uint256 utilizationRate = _poolConfig.getUtilizationRate(
+            _totalBorrows,
+            lendingPool.getTotalLiquidity(_token)
+        );
+        uint256 optimal = _poolConfig.getOptimalUtilizationRate();
+        uint256 EQUILIBRIUM = lendingPool.EQUILIBRIUM();
+        uint256 MAX_UTILIZATION_RATE = lendingPool.MAX_UTILIZATION_RATE();
+        if (utilizationRate <= optimal) {
+            // lenders gain = amount * ((EQUILIBRIUM / OPTIMAL) * utilization rate)
+            lendersGain = (optimal == 0)
+            ? 0
+            : _amount.wadMul(EQUILIBRIUM).wadMul(utilizationRate).wadDiv(optimal);
+        } else {
+            // lenders gain = amount * ((EQUILIBRIUM * (utilization rate - OPTIMAL)) / (MAX_UTILIZATION_RATE - OPTIMAL)) + EQUILIBRIUM)
+            lendersGain = (utilizationRate >= MAX_UTILIZATION_RATE)
+            ? _amount
+            : _amount.wadMul(
+                EQUILIBRIUM
+                .wadMul(utilizationRate.sub(optimal))
+                .wadDiv(MAX_UTILIZATION_RATE.sub(optimal))
+                .add(EQUILIBRIUM)
+            );
+        }
+        // borrowers gain = amount - lenders gain
+        //borrowersGain = _amount.sub(lendersGain);
+    }
 
 }
