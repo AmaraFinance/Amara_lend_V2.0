@@ -518,5 +518,48 @@ contract LendingInfoGetter is Ownable {
         // borrowers gain = amount - lenders gain
         //borrowersGain = _amount.sub(lendersGain);
     }
+    
+    function _calculateRewardBorrow(
+        ERC20 _token,
+        address _account,
+        uint256 _multiplier
+    ) public view returns (uint256) {
+        (,uint256 borrowShares, uint256 latestMultiplier,) = lendingPool.userPoolData(_account, address(_token));
+        uint256 pending = _multiplier
+        .sub(latestMultiplier)
+        .mul(borrowShares)
+        .div(1e12);
+        return pending;
+    }
+
+    function _calculateTokenRewardBorrow(
+        ERC20 _token,
+        address _account,
+        uint256 _multiplierToken
+    ) public view returns (uint256) {
+        (,uint256 borrowShares,, uint256 latestTokenMultiplier) = lendingPool.userPoolData(_account, address(_token));
+        uint256 pending = _multiplierToken
+        .sub(latestTokenMultiplier)
+        .mul(borrowShares)
+        .div(1e12);
+        return pending;
+    }
+
+    function _calculateRewardLend(
+        MaToken maToken,
+        address _account,
+        uint256 _multiplier
+    ) public view returns (uint256) {
+        return (_multiplier.sub(maToken.latestMultiplier(_account)).mul(maToken.balanceOf(_account))).div(1e12);
+    }
+
+    function _calculateTokenRewardLend(
+        MaToken maToken,
+        address _account,
+        uint256 _multiplierToken
+    ) public view returns (uint256) {
+        return
+        (_multiplierToken.sub(maToken.latestMultiplierToken(_account)).mul(maToken.balanceOf(_account))).div(1e12);
+    }
 
 }
