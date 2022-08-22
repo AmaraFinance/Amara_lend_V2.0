@@ -562,4 +562,53 @@ contract LendingInfoGetter is Ownable {
         (_multiplierToken.sub(maToken.latestMultiplierToken(_account)).mul(maToken.balanceOf(_account))).div(1e12);
     }
 
+    function getPool(ERC20 _token) public view returns (LendingPool.Pool memory pool) {
+        (
+        LendingPool.PoolStatus status,
+        bool ableBorrow,
+        MaToken maToken,
+        IPoolConfiguration poolConfig,
+        uint256 totalBorrows,
+        uint256 totalBorrowShares,
+        uint256 poolReserves,
+        uint256 lastUpdateTimestamp,
+        uint256 totalMaraReward,
+        uint256 totalTokenReward,
+        uint256 multiplier,
+        uint256 multiplierToken
+        ) = lendingPool.pools(address(_token));
+        pool = LendingPool.Pool(
+            status,
+            ableBorrow,
+            maToken,
+            poolConfig,
+            totalBorrows,
+            totalBorrowShares,
+            poolReserves,
+            lastUpdateTimestamp,
+            totalMaraReward,
+            totalTokenReward,
+            multiplier,
+            multiplierToken
+        );
+    }
+
+    function getRepayShareAmount(ERC20 _token, uint256 _amount) external view returns (uint256)
+    {
+        LendingPool.Pool memory pool = getPool(_token);
+        if (pool.totalBorrowShares == 0) {
+           return 0;
+        }
+        //_amount = _amount.src2dest(_token.decimals()); // code exceeds 24576 bytes
+        return _amount.mul(pool.totalBorrowShares).div(pool.totalBorrows);
+    }
+    
+    function src2dest(uint256 _amount, uint8 _decimal) public pure returns(uint256 amount) {
+        amount = _amount * 1e18 / (10 ** uint256(_decimal));
+    }
+
+    function dest2src(uint256 _amount, uint8 _decimal) public pure returns(uint256 amount) {
+        amount = _amount * (10 ** uint256(_decimal)) / 1e18;
+    }
+
 }
